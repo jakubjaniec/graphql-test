@@ -1,0 +1,22 @@
+targets:
+    $default:
+      builders:
+        graphql_codegen:
+          options:
+            clients:
+              - graphql
+              - graphql_flutter
+            addTypename: false
+        mockito|mockBuilder:
+          generate_for:
+            - test/**.dart
+            - lib/injectable/**.dart
+        ferry_generator|graphql_builder:
+          enabled: true
+          options:
+            schema: graphql_test|lib/graphql/schema.graphql
+        ferry_generator|serializer_builder:
+          enabled: true
+          options:
+            schema: graphql_test|lib/graphql/schema.graphql
+

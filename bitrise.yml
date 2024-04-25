@@ -1,0 +1,376 @@
+---
+format_version: '11'
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: flutter
+app:
+  envs:
+    - BITRISE_FLUTTER_PROJECT_LOCATION: "."
+      opts:
+        is_expand: false
+    - BITRISE_PROJECT_PATH: ios/Runner.xcworkspace
+      opts:
+        is_expand: false
+    - BITRISE_EXPORT_METHOD: app-store
+      opts:
+        is_expand: false
+    - BITRISE_CONFIGURATION: AppStore
+      opts:
+        is_expand: false
+    - BITRISEIO_APPSTORE_API_KEY_ID: W8B6M8C845
+      opts:
+        is_expand: false
+    - FLUTTER_VERSION: 3.16.5
+      opts:
+        is_expand: false
+meta:
+  bitrise.io:
+    machine_type_id: g2-m1.4core
+    stack: osx-xcode-14.3.x-ventura
+trigger_map:
+  - push_branch: development
+    workflow: deploy-dev
+  - push_branch: prod
+    workflow: deploy-prod
+  - push_branch: staging
+    workflow: deploy-staging
+  - pull_request_source_branch: "*"
+    workflow: pull_request
+workflows:
+  _post-steps:
+    steps:
+      - cache-push@2: {}
+      - deploy-to-bitrise-io@2: {}
+  _pre-steps:
+    steps:
+      - activate-ssh-key@4:
+          run_if: ''
+      - git-clone@8: {}
+      - flutter-installer@0:
+          inputs:
+            - version: $FLUTTER_VERSION
+            - is_update: 'false'
+      - cache-pull@2: {}
+  deploy-dev:
+    envs:
+      - BITRISE_DEVELOPMENT_TEAM: 27FAFL2WP5
+        opts:
+          is_expand: false
+      - BITRISE_APPSTORE_API_KEY_ISSUER_ID: 69a6de77-b2fb-47e3-e053-5b8c7c11a4d1
+        opts:
+          is_expand: false
+      - BITRISE_XCODE_RELEASE_DEVELOPMENT_CONFIG: Release-development
+        opts:
+          is_expand: false
+      - FIREBASE_APP_ID: "***TODO***"
+        opts:
+          is_expand: false
+      - FLUTTER_BUILD_PARAMETERS: "--release --flavor dev --target lib/main.dart --dart-define=ENVIRONMENT=dev
+        --build-number $BITRISE_BUILD_NUMBER"
+    before_run:
+      - _pre-steps
+    after_run:
+      - _post-steps
+    steps:
+      - flutter-build@0:
+          inputs:
+            - project_location: "$BITRISE_FLUTTER_PROJECT_LOCATION"
+            - is_debug_mode: 'true'
+            - additional_build_params: "$FLUTTER_BUILD_PARAMETERS"
+            - ios_additional_params: ''
+            - android_additional_params: ''
+            - platform: both
+      - script@1:
+          inputs:
+                  - content: |
+                      # REMEMBER - change project-name in line 74
+                      #!/bin/bash
+                      set -ex
+
+                      brew install lcov
+                      handle_error() {
+                                        echo "ERROR: An error occurred on line $1."
+                                        exit 1
+                                      }
+                      trap 'handle_error $LINENO' ERR
+
+                      # data layer
+                      flutter test --coverage
+                      lcov --ignore-errors unused --ignore-errors empty --remove coverage/lcov.info \
+                        '**.g.dart' \
+                        '**/generated/*' \
+                        'lib/style/*' \
+                        'lib/extensions/*' \
+                        'lib/injectable/*' \
+                        'lib/domain/*' \
+                        'lib/presentation/*' \
+                        'lib/utils/*' \
+                        'lib/example/*' \
+                        'lib/networking_config/*' \
+                        'lib/oss_licenses.dart' \
+                        -o coverage/lcov_data.info
+
+                      # domain layer
+                      lcov --ignore-errors unused --ignore-errors empty --remove coverage/lcov.info \
+                        '**.g.dart' \
+                        '**/generated/*' \
+                        'lib/style/*' \
+                        'lib/extensions/*' \
+                        'lib/injectable/*' \
+                        'lib/data/*' \
+                        'lib/presentation/*' \
+                        'lib/utils/*' \
+                        'lib/example/*' \
+                        'lib/networking_config/*' \
+                        'lib/oss_licenses.dart' \
+                        -o coverage/lcov_domain.info
+
+                      # presentation layer
+                      lcov --ignore-errors unused --ignore-errors empty --remove coverage/lcov.info \
+                        '**.g.dart' \
+                        '**/generated/*' \
+                        'lib/style/*' \
+                        'lib/extensions/*' \
+                        'lib/injectable/*' \
+                        'lib/data/*' \
+                        'lib/domain/*' \
+                        'lib/utils/*' \
+                        'lib/example/*' \
+                        'lib/networking_config/*' \
+                        'lib/oss_licenses.dart' \
+                        -o coverage/lcov_presentation.info
+
+                      # cubit & bloc
+                      lcov --ignore-errors unused --ignore-errors empty --extract coverage/lcov.info "lib/**/*cubit.dart" "lib/**/*bloc.dart" -o coverage/lcov_cubit_bloc.info
+
+                      lines_hit_data=$(grep -E '^LH:' "coverage/lcov_data.info" | awk -F':' '{ sum += $2 } END { print sum }')
+                      lines_found_data=$(grep -E '^LF:' "coverage/lcov_data.info" | awk -F':' '{ sum += $2 } END { print sum }')
+
+                      lines_hit_domain=$(grep -E '^LH:' "coverage/lcov_domain.info" | awk -F':' '{ sum += $2 } END { print sum }')
+                      lines_found_domain=$(grep -E '^LF:' "coverage/lcov_domain.info" | awk -F':' '{ sum += $2 } END { print sum }')
+
+                      lines_hit_presentation=$(grep -E '^LH:' "coverage/lcov_presentation.info" | awk -F':' '{ sum += $2 } END { print sum }')
+                      lines_found_presentation=$(grep -E '^LF:' "coverage/lcov_presentation.info" | awk -F':' '{ sum += $2 } END { print sum }')
+
+                      lines_hit_cubit_bloc=$(grep -E '^LH:' "coverage/lcov_cubit_bloc.info" | awk -F':' '{ sum += $2 } END { print sum }')
+                      lines_found_cubit_bloc=$(grep -E '^LF:' "coverage/lcov_cubit_bloc.info" | awk -F':' '{ sum += $2 } END { print sum }')
+
+                      WIKI_PATH="./.github/wiki/"
+                      git clone git@github.com:DroidsOnRoids/<project-name>.wiki.git $WIKI_PATH
+                      git config --global user.name "Droids On Roids code sentry"
+                      git config --global user.email "jenkins-bot+faultless@droidsonroids.pl"
+                      cd $WIKI_PATH
+
+                      if [ "$lines_found_data" -gt 0 ]; then
+                        coverageRateData=$(( lines_hit_data * 100 / lines_found_data ))
+                        curl -s https://img.shields.io/badge/data_coverage-${coverageRateData}%25-brightgreen > ./data_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update data coverage badge"
+                      else
+                        curl -s https://img.shields.io/badge/data_coverage-0%25-brightgreen > ./data_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update data coverage badge"
+                      fi
+
+                      if [ "$lines_found_domain" -gt 0 ]; then
+                        coverageRateDomain=$(( lines_hit_domain * 100 / lines_found_domain ))
+                        curl -s https://img.shields.io/badge/domain_coverage-${coverageRateDomain}%25-brightgreen > ./domain_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update domain coverage badge"
+                      else
+                        curl -s https://img.shields.io/badge/domain_coverage-0%25-brightgreen > ./domain_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update domain coverage badge"
+                      fi
+
+                      if [ "$lines_found_presentation" -gt 0 ]; then
+                        coverageRatePresentation=$(( lines_hit_presentation * 100 / lines_found_presentation ))
+                        curl -s https://img.shields.io/badge/presentation_coverage-${coverageRatePresentation}%25-brightgreen > ./presentation_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update presentation coverage badge"
+                      else
+                        curl -s https://img.shields.io/badge/presentation_coverage-0%25-brightgreen > ./presentation_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update presentation coverage badge"
+                      fi
+
+                      if [ "$lines_found_cubit_bloc" -gt 0 ]; then
+                        coverageRateCubitBloc=$(( lines_hit_cubit_bloc * 100 / lines_found_cubit_bloc ))
+                        curl -s https://img.shields.io/badge/cubit_bloc_coverage-${coverageRateCubitBloc}%25-brightgreen > ./cubit_bloc_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update cubit_bloc coverage badge"
+                      else
+                        curl -s https://img.shields.io/badge/cubit_bloc_coverage-0%25-brightgreen > ./cubit_bloc_coverage.svg
+
+                        git add --all
+                        git diff-index --quiet HEAD && exit
+                        git commit -m "Update cubit_bloc coverage badge"
+                      fi
+
+                      git push
+  
+          title: Calculate & update coverage            
+      - xcode-archive@5:
+          inputs:
+            - project_path: "$BITRISE_PROJECT_PATH"
+            - scheme: dev
+            - distribution_method: "$BITRISE_EXPORT_METHOD"
+            - configuration: "$BITRISE_XCODE_RELEASE_DEVELOPMENT_CONFIG"
+            - export_development_team: "$BITRISE_DEVELOPMENT_TEAM"
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_URL"
+            - api_key_id: "$BITRISEIO_APPSTORE_API_KEY_ID"
+            - api_key_issuer_id: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - automatic_code_signing: api-key
+      - deploy-to-itunesconnect-application-loader@1:
+          inputs:
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_DEV_URL"
+            - api_issuer: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - connection: 'off'
+      - firebase-app-distribution@0:
+          inputs:
+            - firebase_token: ""
+            - app: "$FIREBASE_APP_ID"
+            - upgrade_firebase_tools: 'true'
+            - app_path: "$BITRISE_APK_PATH"
+            - service_credentials_file: "$BITRISEIO_FIREBASE_SERVICE_KEY_URL"
+            - groups: Graphql TestTest
+  deploy-staging:
+    envs:
+      - BITRISE_DEVELOPMENT_TEAM: 27FAFL2WP5
+        opts:
+          is_expand: false
+      - BITRISE_APPSTORE_API_KEY_ISSUER_ID: 69a6de77-b2fb-47e3-e053-5b8c7c11a4d1
+        opts:
+          is_expand: false
+      - BITRISE_XCODE_RELEASE_STAGING_CONFIG: Release-staging
+        opts:
+          is_expand: false
+      - FIREBASE_APP_ID: "***TODO***"
+        opts:
+          is_expand: false
+      - FLUTTER_BUILD_PARAMETERS: "--release --flavor staging --target lib/main.dart
+        --dart-define=ENVIRONMENT=staging --build-number $BITRISE_BUILD_NUMBER"
+    before_run:
+      - _pre-steps
+    after_run:
+      - _post-steps
+    steps:
+      - flutter-build@0:
+          inputs:
+            - project_location: "$BITRISE_FLUTTER_PROJECT_LOCATION"
+            - is_debug_mode: 'true'
+            - additional_build_params: "$FLUTTER_BUILD_PARAMETERS"
+            - ios_additional_params: ''
+            - android_additional_params: ''
+            - platform: both
+      - xcode-archive@5:
+          inputs:
+            - project_path: "$BITRISE_PROJECT_PATH"
+            - scheme: staging
+            - distribution_method: "$BITRISE_EXPORT_METHOD"
+            - configuration: "$BITRISE_XCODE_RELEASE_STAGING_CONFIG"
+            - export_development_team: "$BITRISE_DEVELOPMENT_TEAM"
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_URL"
+            - api_key_id: "$BITRISEIO_APPSTORE_API_KEY_ID"
+            - api_key_issuer_id: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - automatic_code_signing: api-key
+      - deploy-to-itunesconnect-application-loader@1:
+          inputs:
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_STAGING_URL"
+            - api_issuer: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - connection: 'off'
+      - firebase-app-distribution@0:
+          inputs:
+            - firebase_token: ""
+            - app: "$FIREBASE_APP_ID"
+            - upgrade_firebase_tools: 'true'
+            - app_path: "$BITRISE_APK_PATH"
+            - service_credentials_file: "$BITRISEIO_FIREBASE_SERVICE_KEY_URL"
+            - groups: Graphql TestTest
+  deploy-prod:
+    envs:
+      - BITRISE_DEVELOPMENT_TEAM: 27FAFL2WP5
+        opts:
+          is_expand: false
+      - BITRISE_APPSTORE_API_KEY_ISSUER_ID: 69a6de77-b2fb-47e3-e053-5b8c7c11a4d1
+        opts:
+          is_expand: false
+      - BITRISE_XCODE_RELEASE_PRODUCTION_CONFIG: Release-production
+        opts:
+          is_expand: false
+      - FIREBASE_APP_ID: "***TODO***"
+        opts:
+          is_expand: false
+      - FLUTTER_BUILD_PARAMETERS: "--release --flavor production --target lib/main.dart
+        --dart-define=ENVIRONMENT=production --build-number $BITRISE_BUILD_NUMBER"
+    before_run:
+      - _pre-steps
+    after_run:
+      - _post-steps
+    steps:
+      - flutter-build@0:
+          inputs:
+            - project_location: "$BITRISE_FLUTTER_PROJECT_LOCATION"
+            - is_debug_mode: 'true'
+            - additional_build_params: "$FLUTTER_BUILD_PARAMETERS"
+            - ios_additional_params: ''
+            - android_additional_params: ''
+            - platform: both
+      - xcode-archive@5:
+          inputs:
+            - project_path: "$BITRISE_PROJECT_PATH"
+            - scheme: production
+            - distribution_method: "$BITRISE_EXPORT_METHOD"
+            - configuration: "$BITRISE_XCODE_RELEASE_PRODUCTION_CONFIG"
+            - export_development_team: "$BITRISE_DEVELOPMENT_TEAM"
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_URL"
+            - api_key_id: "$BITRISEIO_APPSTORE_API_KEY_ID"
+            - api_key_issuer_id: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - automatic_code_signing: api-key
+      - deploy-to-itunesconnect-application-loader@1:
+          inputs:
+            - api_key_path: "$BITRISEIO_APPSTORE_API_KEY_PROD_URL"
+            - api_issuer: "$BITRISE_APPSTORE_API_KEY_ISSUER_ID"
+            - connection: 'off'
+      - firebase-app-distribution@0:
+          inputs:
+            - firebase_token: ""
+            - app: "$FIREBASE_APP_ID"
+            - upgrade_firebase_tools: 'true'
+            - app_path: "$BITRISE_APK_PATH"
+            - service_credentials_file: "$BITRISEIO_FIREBASE_SERVICE_KEY_URL"
+            - groups: Graphql TestTest
+  pull_request:
+    before_run:
+      - _pre-steps
+    after_run:
+      - _post-steps
+    steps:
+      - flutter-analyze@0:
+          inputs:
+            - fail_severity: info
+      - flutter-test@1:
+          inputs:
+            - project_location: "$BITRISE_FLUTTER_PROJECT_LOCATION"
+      - certificate-and-profile-installer@1: {}
+      - flutter-build@0:
+          inputs:
+            - project_location: "$BITRISE_FLUTTER_PROJECT_LOCATION"
+            - is_debug_mode: 'true'
+            - additional_build_params: "$FLUTTER_BUILD_PARAMETERS_DEV"
+            - ios_additional_params: ''
+            - android_additional_params: ''
+            - platform: both
